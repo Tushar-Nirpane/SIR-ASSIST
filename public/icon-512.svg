@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="govGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0B192C"/>
+      <stop offset="50%" stop-color="#1E3E62"/>
+      <stop offset="100%" stop-color="#FF6500"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="100" fill="url(#govGrad)"/>
+  <circle cx="256" cy="256" r="180" fill="none" stroke="#FFFFFF" stroke-opacity="0.15" stroke-width="8"/>
+  <path d="M256 120 L350 170 L350 280 Q350 360 256 400 Q162 360 162 280 L162 170 Z" fill="#FF6500" fill-opacity="0.2" stroke="#FF6500" stroke-width="12" stroke-linejoin="round"/>
+  <path d="M210 260 L245 295 L315 220" fill="none" stroke="#FFFFFF" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="256" y="450" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, sans-serif" font-size="36" font-weight="bold" letter-spacing="4">SIR-ASSIST</text>
+</svg>

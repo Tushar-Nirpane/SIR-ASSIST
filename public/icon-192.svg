@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <defs>
+    <linearGradient id="govGrad192" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0B192C"/>
+      <stop offset="50%" stop-color="#1E3E62"/>
+      <stop offset="100%" stop-color="#FF6500"/>
+    </linearGradient>
+  </defs>
+  <rect width="192" height="192" rx="38" fill="url(#govGrad192)"/>
+  <circle cx="96" cy="96" r="68" fill="none" stroke="#FFFFFF" stroke-opacity="0.15" stroke-width="4"/>
+  <path d="M96 45 L132 65 L132 105 Q132 135 96 150 Q60 135 60 105 L60 65 Z" fill="#FF6500" fill-opacity="0.25" stroke="#FF6500" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M78 98 L92 112 L118 84" fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
