@@ -10,6 +10,22 @@ from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def normalize_async_database_url(url: str) -> str:
+    """
+    Normalize a Postgres DSN for SQLAlchemy's asyncpg driver.
+
+    Managed platforms (Railway, Heroku, Render, ...) inject ``DATABASE_URL``
+    with a plain ``postgres://`` or ``postgresql://`` scheme, but SQLAlchemy's
+    async engine needs an explicit driver. We rewrite the scheme to
+    ``postgresql+asyncpg://`` while leaving an explicit driver untouched.
+    """
+    if url.startswith("postgres://"):
+        return "postgresql+asyncpg://" + url[len("postgres://"):]
+    if url.startswith("postgresql://"):
+        return "postgresql+asyncpg://" + url[len("postgresql://"):]
+    return url
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -34,7 +50,8 @@ class Settings(BaseSettings):
     def database_url_must_not_be_empty(cls, v: str) -> str:
         if not v or not v.strip():
             raise ValueError("DATABASE_URL must be set and non-empty")
-        return v.strip()
+        # Accept Railway/Heroku-style DSNs by normalizing to the asyncpg driver.
+        return normalize_async_database_url(v.strip())
 
     @field_validator("CORS_ORIGIN")
     @classmethod

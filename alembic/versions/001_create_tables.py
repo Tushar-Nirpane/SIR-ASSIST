@@ -31,6 +31,16 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     # ------------------------------------------------------------------ #
+    # Required PostgreSQL extensions
+    #
+    # These are enabled by docker/postgres/init.sql for local Docker, but
+    # managed Postgres (e.g. Railway) does not run that init script, so we
+    # ensure they exist here before the GIN trigram indexes below are built.
+    # ------------------------------------------------------------------ #
+    op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+    op.execute("CREATE EXTENSION IF NOT EXISTS fuzzystrmatch")
+
+    # ------------------------------------------------------------------ #
     # dob_rule_bracket — must be created first (no FK dependencies)
     # ------------------------------------------------------------------ #
     op.create_table(
