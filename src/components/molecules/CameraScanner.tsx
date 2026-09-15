@@ -51,14 +51,39 @@ export const CameraScanner: React.FC<CameraScannerProps> = ({
 
   const startCamera = async () => {
     setCameraError(null);
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraError(
+        'Camera API is unavailable in this browser or context. Use HTTPS (or localhost) with a Chromium/Safari browser, or upload an image instead.'
+      );
+      return;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+        // Use `ideal` (not `exact`) for facingMode so desktops/laptops with
+        // only a front camera fall back gracefully instead of throwing
+        // OverconstrainedError.
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
       });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play();
-        setCameraActive(true);
+
+      const video = videoRef.current;
+      if (!video) {
+        // Should not happen now that <video> is always mounted, but never
+        // leak a live stream if it does.
+        stream.getTracks().forEach((track) => track.stop());
+        setCameraError('Camera preview could not be initialised. Please try again.');
+        return;
+      }
+
+      video.srcObject = stream;
+      setCameraActive(true);
+      // play() can reject when the browser defers playback; the stream is
+      // still attached, so treat a rejection as non-fatal.
+      try {
+        await video.play();
+      } catch {
+        /* muted + playsInline makes autoplay safe to ignore */
       }
     } catch (err: any) {
       setCameraError('Camera access denied or unavailable. You can upload an image or choose a pre-loaded document sample.');
@@ -170,14 +195,18 @@ export const CameraScanner: React.FC<CameraScannerProps> = ({
 
       {/* Main Viewfinder */}
       <div className="relative aspect-video max-h-[360px] w-full rounded-2xl overflow-hidden bg-[#E8EBEB] border border-[#BEC3C8] flex flex-col items-center justify-center shadow-inner">
+        {/* The <video> node is ALWAYS mounted (visibility toggled via CSS) so
+            that videoRef.current exists when getUserMedia() resolves. */}
+        <video
+          ref={videoRef}
+          playsInline
+          muted
+          autoPlay
+          className={`w-full h-full object-cover ${cameraActive ? '' : 'hidden'}`}
+        />
+
         {cameraActive ? (
           <>
-            <video
-              ref={videoRef}
-              playsInline
-              muted
-              className="w-full h-full object-cover"
-            />
             {/* Viewfinder Target Guide */}
             <div className="absolute inset-4 border-2 border-dashed border-[#AC6953] rounded-xl pointer-events-none flex flex-col justify-between p-3">
               <div className="flex justify-between items-center text-[11px] font-mono font-bold text-white bg-[#0C3B5D]/90 px-2 py-0.5 rounded shadow">
