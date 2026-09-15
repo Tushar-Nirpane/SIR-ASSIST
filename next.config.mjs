@@ -1,8 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  // Standalone output for Docker multi-stage build
-  output: 'standalone',
+  // Standalone output is only needed for the Docker multi-stage build.
+  // Vercel produces its own build output, so leave it unset there.
+  output: process.env.VERCEL ? undefined : 'standalone',
   webpack: (config) => {
     config.experiments = {
       ...config.experiments,
