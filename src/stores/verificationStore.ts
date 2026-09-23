@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import { SearchMatchResult } from '../lib/db/sqlite-indexeddb-engine';
 
 export interface OCRResultState {
@@ -10,6 +11,8 @@ export interface OCRResultState {
   extractedAge?: number;
   extractedGender?: string;
   capturedImageUri?: string;
+  warnings?: string[];
+  isRealExtraction?: boolean;
 }
 
 interface VerificationWizardState {
@@ -71,23 +74,40 @@ const initialWizardValues = {
   isSealing: false,
 };
 
-export const useVerificationStore = create<VerificationWizardState>((set) => ({
-  ...initialWizardValues,
-  setStep: (step) => set({ currentStep: step }),
-  setOfficerId: (officerId) => set({ officerId }),
-  setPartNo: (partNo) => set({ partNo }),
-  setOCRState: (ocrState) => set({ ocrState }),
-  setSelectedLegacyRecord: (selectedLegacyRecord) => set({ selectedLegacyRecord }),
-  setManualSearchQuery: (query) =>
-    set((state) => ({
-      manualSearchQuery: { ...state.manualSearchQuery, ...query },
-    })),
-  setChecklistValue: (key, value) =>
-    set((state) => ({
-      checklistValues: { ...state.checklistValues, [key]: value },
-    })),
-  setChecklistValues: (checklistValues) => set({ checklistValues }),
-  setGeneratedBundleId: (generatedBundleId) => set({ generatedBundleId }),
-  setIsSealing: (isSealing) => set({ isSealing }),
-  resetWizard: () => set(initialWizardValues),
-}));
+export const useVerificationStore = create<VerificationWizardState>()(
+  persist(
+    (set) => ({
+      ...initialWizardValues,
+      setStep: (step) => set({ currentStep: step }),
+      setOfficerId: (officerId) => set({ officerId }),
+      setPartNo: (partNo) => set({ partNo }),
+      setOCRState: (ocrState) => set({ ocrState }),
+      setSelectedLegacyRecord: (selectedLegacyRecord) => set({ selectedLegacyRecord }),
+      setManualSearchQuery: (query) =>
+        set((state) => ({
+          manualSearchQuery: { ...state.manualSearchQuery, ...query },
+        })),
+      setChecklistValue: (key, value) =>
+        set((state) => ({
+          checklistValues: { ...state.checklistValues, [key]: value },
+        })),
+      setChecklistValues: (checklistValues) => set({ checklistValues }),
+      setGeneratedBundleId: (generatedBundleId) => set({ generatedBundleId }),
+      setIsSealing: (isSealing) => set({ isSealing }),
+      resetWizard: () => set(initialWizardValues),
+    }),
+    {
+      name: 'sir_assist_wizard_state_v1',
+      partialize: (state) => ({
+        currentStep: state.currentStep,
+        officerId: state.officerId,
+        partNo: state.partNo,
+        ocrState: state.ocrState,
+        selectedLegacyRecord: state.selectedLegacyRecord,
+        manualSearchQuery: state.manualSearchQuery,
+        checklistValues: state.checklistValues,
+        generatedBundleId: state.generatedBundleId,
+      }),
+    }
+  )
+);

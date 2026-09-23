@@ -1,9 +1,9 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Search, Database, UserX, ArrowRight, Cloud, WifiOff } from 'lucide-react';
+import { Search, Database, UserX, ArrowRight, Cloud, WifiOff, AlertTriangle } from 'lucide-react';
 import { legacyRollEngine, SearchMatchResult } from '@/lib/db/sqlite-indexeddb-engine';
-import { searchLineage, LineageMatchItem } from '@/lib/api/sir-assist-client';
+import { searchLineage, getHealth, LineageMatchItem } from '@/lib/api/sir-assist-client';
 import { MatchScoreCard } from '../molecules/MatchScoreCard';
 import { Button } from '../atoms/Button';
 import { Badge } from '../atoms/Badge';
@@ -15,20 +15,24 @@ interface LegacyMatchExplorerProps {
 
 /**
  * Map a backend LineageMatchItem → the SearchMatchResult shape that
- * MatchScoreCard expects (same as the offline IndexedDB engine returns).
+ * MatchScoreCard expects (preserving legacy roll attribution).
  */
 function apiMatchToLocal(item: LineageMatchItem, index: number): SearchMatchResult {
+  const identifier = item.polling_station_id
+    ? `BOOTH-${item.polling_station_id}`
+    : `LEGACY-${item.legacy_record_id.slice(0, 8).toUpperCase()}`;
+
   return {
     id: `api-${item.legacy_record_id}`,
     fullName: item.elector_name,
-    epicNo: `N/A`,
+    epicNo: identifier,
     relativeName: item.father_or_husband_name,
     relationType: 'FATHER' as const,
     age: 0,
     gender: 'O',
     partNo: item.polling_station_id ?? '',
     sectionNo: '',
-    serialNo: 0,
+    serialNo: index + 1,
     address: '',
     soundexName: '',
     metaphoneName: '',
@@ -47,8 +51,10 @@ export const LegacyMatchExplorer: React.FC<LegacyMatchExplorerProps> = ({ onMatc
   const [matches, setMatches] = useState<SearchMatchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [totalRecordsInDb, setTotalRecordsInDb] = useState(0);
+  const [backendRecordCount, setBackendRecordCount] = useState<number | null>(null);
   const [dataSource, setDataSource] = useState<'backend' | 'offline'>('backend');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [storageWarning, setStorageWarning] = useState<string | null>(null);
   const [partFilter] = useState('');
 
   useEffect(() => {
@@ -56,6 +62,24 @@ export const LegacyMatchExplorer: React.FC<LegacyMatchExplorerProps> = ({ onMatc
       // Always initialise the offline engine so it's ready as a fallback
       const count = await legacyRollEngine.initialize();
       setTotalRecordsInDb(count);
+
+      // Check IDB durability health
+      const health = legacyRollEngine.getStorageHealth();
+      if (health.isDegraded) {
+        setStorageWarning(health.error || 'Offline storage running in temporary memory mode.');
+      }
+
+      // Query live backend stats for accurate record count badge
+      getHealth()
+        .then((h) => {
+          if (h && typeof h.legacy_roll_count === 'number') {
+            setBackendRecordCount(h.legacy_roll_count);
+          }
+        })
+        .catch(() => {
+          // Backend may be offline during initial load
+        });
+
       runSearch();
     };
     initDb();
@@ -69,24 +93,27 @@ export const LegacyMatchExplorer: React.FC<LegacyMatchExplorerProps> = ({ onMatc
     setIsLoading(true);
     setErrorMsg(null);
     try {
-      // ── Primary: FastAPI backend ──────────────────────────────────────
+      // ── Primary: FastAPI backend (Aligned schema: full_name, father_or_husband_name, declared_address_code) ──
       const apiResponse = await searchLineage({
-        full_name: manualSearchQuery.name,
-        father_or_husband_name: manualSearchQuery.relative || "",
-        epic_number: manualSearchQuery.epic || undefined,
+        full_name: manualSearchQuery.name.trim(),
+        father_or_husband_name: manualSearchQuery.relative?.trim() || undefined,
+        declared_address_code: partFilter.trim() || undefined,
       });
       const apiMatches = apiResponse.matches.map(apiMatchToLocal);
       setMatches(apiMatches);
       setDataSource('backend');
 
-      // Auto-select if top match >= 95
-      if (!selectedLegacyRecord && apiMatches.length > 0 && apiMatches[0].matchScore >= 95) {
-        setSelectedLegacyRecord(apiMatches[0]);
-      }
-    } catch {
+      // Note: Removed silent auto-select on >= 95. The officer must explicitly review and confirm the candidate.
+    } catch (err: any) {
       // ── Fallback: offline IndexedDB engine ────────────────────────────
       setDataSource('offline');
-      setErrorMsg('Backend unreachable — searching local offline snapshot');
+      const isDeviceOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+      if (isDeviceOffline) {
+        setErrorMsg('Device is offline. Searching local IndexedDB offline roll archive.');
+      } else {
+        setErrorMsg(`Central server unreachable (${err?.message || 'Connection timeout'}). Switched to offline roll snapshot.`);
+      }
+
       try {
         const offlineResults = await legacyRollEngine.searchVoter({
           queryName: manualSearchQuery.name,
@@ -96,11 +123,8 @@ export const LegacyMatchExplorer: React.FC<LegacyMatchExplorerProps> = ({ onMatc
           minScoreThreshold: 20,
         });
         setMatches(offlineResults);
-        if (!selectedLegacyRecord && offlineResults.length > 0 && offlineResults[0].matchScore >= 95) {
-          setSelectedLegacyRecord(offlineResults[0]);
-        }
       } catch (offlineErr) {
-        setErrorMsg('Search failed in both backend and offline store.');
+        setErrorMsg('Search failed in both central backend and offline local store.');
         console.error(offlineErr);
       }
     } finally {
@@ -129,27 +153,37 @@ export const LegacyMatchExplorer: React.FC<LegacyMatchExplorerProps> = ({ onMatc
           <div className="flex items-center gap-2">
             <Database className="w-5 h-5 text-gov-navy dark:text-sky-400" />
             <h3 className="text-sm font-extrabold text-gov-navy dark:text-sky-300">
-              2002-04 Legacy Voter Roll
+              2002-04 Legacy Voter Roll Archive
             </h3>
           </div>
           <div className="flex items-center gap-2">
             {dataSource === 'backend' ? (
               <Badge variant="blue">
                 <Cloud className="w-3 h-3 mr-1 inline" />
-                {totalRecordsInDb} Records via Backend
+                {backendRecordCount !== null
+                  ? `${backendRecordCount.toLocaleString()} Records via Central Backend`
+                  : 'Central Archive (Live)'}
               </Badge>
             ) : (
               <Badge variant="gold">
                 <WifiOff className="w-3 h-3 mr-1 inline" />
-                Offline Snapshot
+                {totalRecordsInDb} Local Offline Records
               </Badge>
             )}
           </div>
         </div>
 
         {errorMsg && (
-          <div className="text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-700 rounded-xl px-3 py-2">
-            ⚠ {errorMsg}
+          <div className="text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-700 rounded-xl px-3 py-2 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600" />
+            <span>{errorMsg}</span>
+          </div>
+        )}
+
+        {storageWarning && (
+          <div className="text-xs text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-700 rounded-xl px-3 py-2 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
+            <span>Storage Warning: {storageWarning}</span>
           </div>
         )}
 

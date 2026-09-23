@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { Navbar } from '@/components/organisms/Navbar';
+import { ErrorBoundary } from '@/components/atoms/ErrorBoundary';
 
 export const metadata: Metadata = {
   title: 'SIR-Assist | Official Government Voter Verification Portal',
@@ -35,9 +36,11 @@ export default function RootLayout({
       <body className="min-h-screen bg-[#F8FAFC] dark:bg-[#0B1120] text-slate-800 dark:text-slate-100 flex flex-col antialiased selection:bg-gov-navy selection:text-white transition-colors duration-200">
         <Navbar />
         <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-24 md:pb-12">
-          {children}
+          <ErrorBoundary>
+            {children}
+          </ErrorBoundary>
         </main>
-        {/* Service Worker auto-register script */}
+        {/* Service Worker auto-register script with event dispatching on failure */}
         <script
           dangerouslySetInnerHTML={{
             __html: `
@@ -47,6 +50,7 @@ export default function RootLayout({
                     console.log('SIR-Assist ServiceWorker registered with scope:', registration.scope);
                   }).catch(function(err) {
                     console.warn('ServiceWorker registration failed:', err);
+                    window.dispatchEvent(new CustomEvent('sw-registration-failed', { detail: err ? err.message : 'Unknown' }));
                   });
                 });
               }

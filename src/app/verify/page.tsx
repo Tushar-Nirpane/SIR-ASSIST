@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import confetti from 'canvas-confetti';
 import {
   ShieldCheck,
@@ -11,6 +12,7 @@ import {
   RotateCcw,
   Sparkles,
   Printer,
+  AlertTriangle,
 } from 'lucide-react';
 import { StepProgress } from '@/components/atoms/StepProgress';
 import { Breadcrumbs } from '@/components/atoms/Breadcrumbs';
@@ -30,7 +32,10 @@ import {
   VerificationRecord,
 } from '@/lib/crypto/sync-bundle';
 
-export default function VerifyPage() {
+function VerifyWizardContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
   const {
     currentStep,
     setStep,
@@ -48,13 +53,47 @@ export default function VerifyPage() {
 
   const { enqueueBundle } = useSyncStore();
   const [trustBadgeData, setTrustBadgeData] = useState<TrustBadgeData | null>(null);
+  const [sealError, setSealError] = useState<string | null>(null);
+
+  // Sync step with URL parameter and browser history
+  useEffect(() => {
+    const stepParam = searchParams.get('step');
+    if (stepParam) {
+      const parsedStep = parseInt(stepParam, 10);
+      if (parsedStep >= 1 && parsedStep <= 4 && parsedStep !== currentStep) {
+        // Prevent skipping ahead without prerequisites
+        if (parsedStep === 2 && !ocrState) return;
+        if (parsedStep === 3 && !ocrState) return;
+        setStep(parsedStep);
+      }
+    }
+  }, [searchParams, currentStep, ocrState, setStep]);
+
+  const updateStep = (newStep: number) => {
+    setStep(newStep);
+    router.push(`/verify?step=${newStep}`, { scroll: false });
+  };
+
+  // Warn officer if they attempt to close the tab during an in-progress verification
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (currentStep > 1 && currentStep < 4) {
+        e.preventDefault();
+        e.returnValue = '';
+        return '';
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [currentStep]);
 
   const handleOCRComplete = () => {
-    setStep(2);
+    updateStep(2);
   };
 
   const handleMatchComplete = () => {
-    setStep(3);
+    updateStep(3);
   };
 
   const maskEpic = (epic: string) => {
@@ -64,11 +103,30 @@ export default function VerifyPage() {
   };
 
   const handleExecuteSeal = async () => {
+    setSealError(null);
+
+    // Fail loudly if required verification fields are missing instead of sealing fake placeholders
+    const epicNo = ocrState?.extractedEpic || selectedLegacyRecord?.epicNo;
+    const fullName = ocrState?.extractedName || selectedLegacyRecord?.fullName;
+
+    if (!epicNo || epicNo.trim() === '' || epicNo === 'PENDING-EPIC') {
+      setSealError('Cannot seal verification record: A valid EPIC number must be extracted or entered.');
+      return;
+    }
+
+    if (!fullName || fullName.trim() === '' || fullName === 'Verified Citizen') {
+      setSealError('Cannot seal verification record: Elector full name is required and cannot be empty.');
+      return;
+    }
+
+    if (!partNo || partNo.trim() === '') {
+      setSealError('Cannot seal verification record: Polling part number is missing.');
+      return;
+    }
+
     setIsSealing(true);
 
     try {
-      const epicNo = ocrState?.extractedEpic || selectedLegacyRecord?.epicNo || 'PENDING-EPIC';
-      const fullName = ocrState?.extractedName || selectedLegacyRecord?.fullName || 'Verified Citizen';
       const relativeName = ocrState?.extractedRelative || selectedLegacyRecord?.relativeName;
       const txId = 'TX-' + crypto.randomUUID().slice(0, 8).toUpperCase();
 
@@ -80,8 +138,8 @@ export default function VerifyPage() {
         partNo,
         serialNo: selectedLegacyRecord?.serialNo ? `#${selectedLegacyRecord.serialNo}` : undefined,
         verificationStatus: checklistValues.fieldVerdict || 'VERIFIED',
-        matchScore: selectedLegacyRecord?.matchScore || (ocrState ? 98 : 90),
-        ocrConfidence: ocrState?.confidence || 98,
+        matchScore: selectedLegacyRecord?.matchScore || (ocrState ? ocrState.confidence : 90),
+        ocrConfidence: ocrState?.confidence ?? 0,
         checklistResponses: checklistValues,
         discrepancyNotes: checklistValues.officerRemarks,
         timestamp: new Date().toLocaleString(),
@@ -117,9 +175,9 @@ export default function VerifyPage() {
         origin: { y: 0.6 },
       });
 
-      setStep(4);
+      updateStep(4);
     } catch (err: any) {
-      alert(`Cryptographic sealing error: ${err.message}`);
+      setSealError(`Cryptographic sealing error: ${err.message || 'Operation failed'}`);
     } finally {
       setIsSealing(false);
     }
@@ -226,6 +284,13 @@ export default function VerifyPage() {
               onChange={(key, val) => setChecklistValue(key, val)}
             />
 
+            {sealError && (
+              <div className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-800 dark:text-rose-300 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
+                <span>{sealError}</span>
+              </div>
+            )}
+
             <div className="flex flex-wrap justify-between items-center gap-3 pt-4 border-t border-slate-200 dark:border-slate-800">
               <Button
                 variant="outline"
@@ -289,5 +354,19 @@ export default function VerifyPage() {
         </AnimatedSection>
       )}
     </div>
+  );
+}
+
+export default function VerifyPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="p-12 text-center text-xs font-mono text-slate-400">
+          Loading Statutory Verification Environment...
+        </div>
+      }
+    >
+      <VerifyWizardContent />
+    </Suspense>
   );
 }

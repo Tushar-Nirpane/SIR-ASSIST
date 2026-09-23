@@ -10,9 +10,10 @@ const API_BASE = '/api/v1';
 export interface LineageSearchRequest {
   full_name: string;
   father_or_husband_name?: string;
-  date_of_birth?: string; // ISO format: YYYY-MM-DD
-  epic_number?: string;
-  address_fragment?: string;
+  mother_name?: string;
+  dob?: string; // ISO format: YYYY-MM-DD
+  declared_address_code?: string;
+  top_n?: number;
 }
 
 export interface MatchBasis {

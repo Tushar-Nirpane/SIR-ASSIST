@@ -1,8 +1,11 @@
-const CACHE_NAME = 'sir-assist-core-v1';
-const DYNAMIC_CACHE = 'sir-assist-dynamic-v1';
+const CACHE_NAME = 'sir-assist-core-v2';
+const DYNAMIC_CACHE = 'sir-assist-dynamic-v2';
 
 const STATIC_ASSETS = [
   '/',
+  '/verify',
+  '/search',
+  '/sync',
   '/manifest.json',
   '/icon-192.svg',
   '/icon-512.svg'
@@ -11,7 +14,14 @@ const STATIC_ASSETS = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS);
+      // Use individual promises to ensure partial failures in dev don't abort entire install
+      return Promise.allSettled(
+        STATIC_ASSETS.map((asset) =>
+          cache.add(asset).catch((err) => {
+            console.warn(`[SW] Could not precache ${asset}:`, err);
+          })
+        )
+      );
     })
   );
   self.skipWaiting();
@@ -53,10 +63,17 @@ self.addEventListener('fetch', (event) => {
           }
           return networkResponse;
         })
-        .catch(() => {
-          // If offline and navigating to a page, return cached root or page
+        .catch(async () => {
+          // If offline and navigating to a page, match the exact page URL route first
           if (request.mode === 'navigate') {
-            return caches.match('/') || cachedResponse;
+            const exactPage = await caches.match(request);
+            if (exactPage) return exactPage;
+
+            const pathPage = await caches.match(url.pathname);
+            if (pathPage) return pathPage;
+
+            // Only fallback to root as last resort
+            return (await caches.match('/')) || cachedResponse;
           }
           return cachedResponse;
         });

@@ -60,11 +60,23 @@ export const GOV_SAMPLE_DOCS: SampleDoc[] = [
   },
 ];
 
+export interface SampleMetadata {
+  name?: string;
+  epic?: string;
+  relative?: string;
+  fileName?: string;
+  fileSize?: string;
+  fileType?: string;
+}
+
 interface SmartDropzoneProps {
-  onFileSelect: (fileUri: string, sampleData?: { name: string; epic: string; relative: string; fileName: string; fileSize: string; fileType: string }) => void;
+  onFileSelect: (fileUri: string, sampleData?: SampleMetadata) => void;
   isProcessing?: boolean;
   onCameraRequest?: () => void;
 }
+
+const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
+const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
 
 export const SmartDropzone: React.FC<SmartDropzoneProps> = ({
   onFileSelect,
@@ -72,6 +84,7 @@ export const SmartDropzone: React.FC<SmartDropzoneProps> = ({
   onCameraRequest,
 }) => {
   const [isDragOver, setIsDragOver] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
   const [selectedFileMeta, setSelectedFileMeta] = useState<{
     name: string;
     size: string;
@@ -90,16 +103,73 @@ export const SmartDropzone: React.FC<SmartDropzoneProps> = ({
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
+  /**
+   * Downscale high-resolution images via offscreen canvas to avoid massive base64 URIs
+   */
+  const downscaleImageIfNeeded = (dataUri: string): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX_DIM = 1600;
+        let width = img.width;
+        let height = img.height;
+
+        if (width <= MAX_DIM && height <= MAX_DIM) {
+          resolve(dataUri);
+          return;
+        }
+
+        if (width > height) {
+          height = Math.round((height * MAX_DIM) / width);
+          width = MAX_DIM;
+        } else {
+          width = Math.round((width * MAX_DIM) / height);
+          height = MAX_DIM;
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.88));
+        } else {
+          resolve(dataUri);
+        }
+      };
+      img.onerror = () => resolve(dataUri);
+      img.src = dataUri;
+    });
+  };
+
   const processFile = (file: File) => {
-    if (!file.type.match('image.*') && !file.type.includes('pdf')) {
-      alert('Please upload an official image file (JPG, PNG, WebP) or PDF scan.');
+    setFileError(null);
+
+    // 1. File size bounds check
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      setFileError(
+        `File size limit exceeded: "${file.name}" is ${formatFileSize(file.size)}. Maximum allowed size is 10 MB.`
+      );
+      return;
+    }
+
+    // 2. Strict MIME type check
+    if (!ALLOWED_MIME_TYPES.includes(file.type)) {
+      setFileError('Invalid file format. Please upload an official JPG, PNG, WebP image or PDF scan.');
       return;
     }
 
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       if (e.target?.result) {
-        const uri = e.target.result as string;
+        let uri = e.target.result as string;
+
+        // Downscale oversized image to keep memory usage low
+        if (file.type.startsWith('image/')) {
+          uri = await downscaleImageIfNeeded(uri);
+        }
+
         setSelectedFileMeta({
           name: file.name,
           size: formatFileSize(file.size),
@@ -107,15 +177,16 @@ export const SmartDropzone: React.FC<SmartDropzoneProps> = ({
           previewUri: uri,
         });
 
+        // Pass clean file metadata without fabricating names or EPIC numbers
         onFileSelect(uri, {
-          name: 'Extracted Elector',
-          epic: 'EPIC' + Math.floor(1000000 + Math.random() * 9000000),
-          relative: '',
           fileName: file.name,
           fileSize: formatFileSize(file.size),
           fileType: file.type,
         });
       }
+    };
+    reader.onerror = () => {
+      setFileError('Failed to read the selected file. Please verify file permissions and try again.');
     };
     reader.readAsDataURL(file);
   };
@@ -231,6 +302,13 @@ export const SmartDropzone: React.FC<SmartDropzoneProps> = ({
         onChange={handleInputChange}
         className="hidden"
       />
+
+      {fileError && (
+        <div className="flex items-center gap-2 p-3.5 text-xs font-semibold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-2xl shadow-sm">
+          <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
+          <span>{fileError}</span>
+        </div>
+      )}
 
       {/* Smart Dropzone Box */}
       <div

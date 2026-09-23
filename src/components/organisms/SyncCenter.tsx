@@ -15,7 +15,7 @@ import {
   KeyRound,
 } from 'lucide-react';
 import { useSyncStore } from '@/stores/syncStore';
-import { decryptSyncBundle, EncryptedSyncBundle, VerificationRecord } from '@/lib/crypto/sync-bundle';
+import { decryptSyncBundle, EncryptedSyncBundle, VerificationRecord, DecryptionError } from '@/lib/crypto/sync-bundle';
 import { Button } from '../atoms/Button';
 import { Badge } from '../atoms/Badge';
 import { InteractionCard } from '../motion/InteractionCard';
@@ -34,22 +34,35 @@ export const SyncCenter: React.FC = () => {
 
   const [selectedBundle, setSelectedBundle] = useState<EncryptedSyncBundle | null>(null);
   const [decryptedRecord, setDecryptedRecord] = useState<VerificationRecord | null>(null);
+  const [decryptError, setDecryptError] = useState<{ code: string; message: string } | null>(null);
   const [syncFeedback, setSyncFeedback] = useState<{ message: string; success: boolean } | null>(null);
   const [isDecrypting, setIsDecrypting] = useState(false);
 
   const handleInspectBundle = async (bundle: EncryptedSyncBundle) => {
     setSelectedBundle(bundle);
     setDecryptedRecord(null);
+    setDecryptError(null);
   };
 
   const handleDecrypt = async () => {
     if (!selectedBundle) return;
     setIsDecrypting(true);
+    setDecryptError(null);
     try {
       const record = await decryptSyncBundle(selectedBundle);
       setDecryptedRecord(record);
     } catch (err: any) {
-      alert(`Decryption Error: ${err.message}`);
+      if (err instanceof DecryptionError) {
+        setDecryptError({
+          code: err.code,
+          message: err.message,
+        });
+      } else {
+        setDecryptError({
+          code: 'CORRUPTED_BUNDLE',
+          message: err?.message || 'Decryption failed. Ensure the cryptographic vault key is intact.',
+        });
+      }
     } finally {
       setIsDecrypting(false);
     }
@@ -249,6 +262,15 @@ export const SyncCenter: React.FC = () => {
                   Verify Decryption
                 </Button>
               </div>
+
+              {decryptError && (
+                <div className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-800 dark:text-rose-300 flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold font-mono">[{decryptError.code}]</span> {decryptError.message}
+                  </div>
+                </div>
+              )}
 
               {/* Ciphertext Metrics */}
               <div className="space-y-2 text-xs font-mono">

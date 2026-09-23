@@ -45,12 +45,37 @@ export const CameraScanner: React.FC<CameraScannerProps> = ({
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const activeStreamRef = useRef<MediaStream | null>(null);
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [selectedSample, setSelectedSample] = useState<number | null>(null);
 
+  // Stop camera tracks cleanly on component unmount
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
+  }, []);
+
+  const stopCamera = () => {
+    if (activeStreamRef.current) {
+      activeStreamRef.current.getTracks().forEach((track) => {
+        track.onended = null;
+        track.stop();
+      });
+      activeStreamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setCameraActive(false);
+  };
+
   const startCamera = async () => {
     setCameraError(null);
+
+    // Stop any existing stream before opening a new one to prevent OS track leaks
+    stopCamera();
 
     if (!navigator.mediaDevices?.getUserMedia) {
       setCameraError(
@@ -61,25 +86,31 @@ export const CameraScanner: React.FC<CameraScannerProps> = ({
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        // Use `ideal` (not `exact`) for facingMode so desktops/laptops with
-        // only a front camera fall back gracefully instead of throwing
-        // OverconstrainedError.
         video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      });
+
+      activeStreamRef.current = stream;
+
+      // Handle OS or browser revoking permission / disconnecting device mid-session
+      stream.getVideoTracks().forEach((track) => {
+        track.onended = () => {
+          setCameraActive(false);
+          setCameraError('Camera stream disconnected or permission was revoked by the operating system.');
+          stopCamera();
+        };
       });
 
       const video = videoRef.current;
       if (!video) {
-        // Should not happen now that <video> is always mounted, but never
-        // leak a live stream if it does.
         stream.getTracks().forEach((track) => track.stop());
+        activeStreamRef.current = null;
         setCameraError('Camera preview could not be initialised. Please try again.');
         return;
       }
 
       video.srcObject = stream;
       setCameraActive(true);
-      // play() can reject when the browser defers playback; the stream is
-      // still attached, so treat a rejection as non-fatal.
+
       try {
         await video.play();
       } catch {
@@ -87,16 +118,7 @@ export const CameraScanner: React.FC<CameraScannerProps> = ({
       }
     } catch (err: any) {
       setCameraError('Camera access denied or unavailable. You can upload an image or choose a pre-loaded document sample.');
-      setCameraActive(false);
-    }
-  };
-
-  const stopCamera = () => {
-    if (videoRef.current && videoRef.current.srcObject) {
-      const stream = videoRef.current.srcObject as MediaStream;
-      stream.getTracks().forEach((track) => track.stop());
-      videoRef.current.srcObject = null;
-      setCameraActive(false);
+      stopCamera();
     }
   };
 
@@ -120,11 +142,24 @@ export const CameraScanner: React.FC<CameraScannerProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (file.size > 10 * 1024 * 1024) {
+      setCameraError(`File size exceeds 10 MB limit (${(file.size / (1024 * 1024)).toFixed(1)} MB).`);
+      return;
+    }
+
+    if (!file.type.startsWith('image/')) {
+      setCameraError('Please select a valid image file (JPG, PNG, WebP).');
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = (event) => {
       if (event.target?.result) {
         onCapture(event.target.result as string);
       }
+    };
+    reader.onerror = () => {
+      setCameraError('Failed to read the selected image file.');
     };
     reader.readAsDataURL(file);
   };

@@ -13,6 +13,8 @@ import {
   EyeOff,
   Sparkles,
   Lock,
+  AlertTriangle,
+  Cpu,
 } from 'lucide-react';
 import { SmartDropzone } from '../molecules/SmartDropzone';
 import { LiveScanningSimulator } from '../molecules/LiveScanningSimulator';
@@ -22,6 +24,7 @@ import { Badge } from '../atoms/Badge';
 import { GovTooltip } from '../atoms/GovTooltip';
 import { InteractionCard } from '../motion/InteractionCard';
 import { OCRResultState, useVerificationStore } from '@/stores/verificationStore';
+import { runTesseractOCR } from '@/lib/ocr/tesseract-engine';
 
 interface OCRScanPipelineProps {
   onScanComplete: (ocrData: OCRResultState) => void;
@@ -39,62 +42,127 @@ export const OCRScanPipeline: React.FC<OCRScanPipelineProps> = ({ onScanComplete
     relative: string;
   } | null>(null);
 
+  const [ocrStatusText, setOcrStatusText] = useState('Initializing on-device OCR engine...');
+  const [ocrProgressPct, setOcrProgressPct] = useState(10);
   const [maskData, setMaskData] = useState(true);
   const [editableFields, setEditableFields] = useState({
     name: ocrState?.extractedName || '',
     epic: ocrState?.extractedEpic || '',
     relative: ocrState?.extractedRelative || '',
-    age: ocrState?.extractedAge?.toString() || '48',
+    age: ocrState?.extractedAge?.toString() || '',
     gender: ocrState?.extractedGender || 'MALE',
   });
 
-  const handleFileSelected = (
+  const handleFileSelected = async (
     dataUri: string,
-    sampleData?: { name: string; epic: string; relative: string }
+    sampleData?: { name?: string; epic?: string; relative?: string }
   ) => {
     setPendingScanUri(dataUri);
-    if (sampleData) {
-      setPendingSample(sampleData);
-      setEditableFields({
+
+    // If officer selected an official demo sample card
+    if (sampleData?.name && sampleData?.epic) {
+      const sample = {
         name: sampleData.name,
         epic: sampleData.epic,
-        relative: sampleData.relative,
-        age: '48',
-        gender: 'MALE',
-      });
-    } else {
-      setPendingSample(null);
+        relative: sampleData.relative || '',
+      };
+      setPendingSample(sample);
       setEditableFields({
-        name: 'Ramesh Kumar Sharma',
-        epic: 'XYZ' + Math.floor(1000000 + Math.random() * 9000000),
-        relative: 'Dwarka Prasad Sharma',
+        name: sample.name,
+        epic: sample.epic,
+        relative: sample.relative,
         age: '48',
         gender: 'MALE',
       });
+      setPipelineMode('scanning');
+      return;
     }
+
+    // Real file or camera capture: Execute genuine Tesseract OCR!
+    setPendingSample(null);
     setPipelineMode('scanning');
+    setOcrStatusText('Starting Tesseract.js Web Worker Sandbox...');
+    setOcrProgressPct(15);
+
+    try {
+      const ocrResult = await runTesseractOCR(dataUri, (p) => {
+        setOcrStatusText(p.status);
+        setOcrProgressPct(p.progress);
+      });
+
+      const parsedName = ocrResult.extractedName || '';
+      const parsedEpic = ocrResult.extractedEpic || '';
+      const parsedRelative = ocrResult.extractedRelative || '';
+      const parsedAge = ocrResult.extractedAge ? String(ocrResult.extractedAge) : '';
+      const parsedGender = ocrResult.extractedGender || 'MALE';
+
+      setEditableFields({
+        name: parsedName,
+        epic: parsedEpic,
+        relative: parsedRelative,
+        age: parsedAge,
+        gender: parsedGender,
+      });
+
+      const finalResult: OCRResultState = {
+        rawText: ocrResult.rawText || 'No recognized text found in document ROI',
+        confidence: ocrResult.confidence,
+        extractedEpic: parsedEpic || undefined,
+        extractedName: parsedName || undefined,
+        extractedRelative: parsedRelative || undefined,
+        extractedAge: parsedAge ? parseInt(parsedAge) : undefined,
+        extractedGender: parsedGender,
+        capturedImageUri: dataUri,
+        warnings: ocrResult.warnings,
+        isRealExtraction: true,
+      };
+
+      setOCRState(finalResult);
+      setPipelineMode('review');
+    } catch (err: any) {
+      console.warn('OCR error during scan execution:', err);
+      const fallbackResult: OCRResultState = {
+        rawText: '',
+        confidence: 0,
+        capturedImageUri: dataUri,
+        warnings: ['OCR execution error. Please verify and enter elector fields manually.'],
+        isRealExtraction: false,
+      };
+      setOCRState(fallbackResult);
+      setPipelineMode('review');
+    }
   };
 
   const handleScanAnimationComplete = () => {
-    const finalResult: OCRResultState = {
-      rawText: `ELECTION COMMISSION OF INDIA\nEPIC: ${editableFields.epic}\nNAME: ${editableFields.name}\nSTATUS: VERIFIED`,
-      confidence: 98,
-      extractedEpic: editableFields.epic,
-      extractedName: editableFields.name,
-      extractedRelative: editableFields.relative,
-      extractedAge: parseInt(editableFields.age) || 48,
-      extractedGender: editableFields.gender as any,
-      capturedImageUri: pendingScanUri,
-    };
+    if (pipelineMode === 'scanning' && pendingSample) {
+      const finalResult: OCRResultState = {
+        rawText: `ELECTION COMMISSION OF INDIA\nEPIC: ${editableFields.epic}\nNAME: ${editableFields.name}\nSTATUS: VERIFIED`,
+        confidence: 96,
+        extractedEpic: editableFields.epic,
+        extractedName: editableFields.name,
+        extractedRelative: editableFields.relative,
+        extractedAge: parseInt(editableFields.age) || 48,
+        extractedGender: editableFields.gender as any,
+        capturedImageUri: pendingScanUri,
+        isRealExtraction: false,
+      };
 
-    setOCRState(finalResult);
-    setPipelineMode('review');
+      setOCRState(finalResult);
+      setPipelineMode('review');
+    }
   };
 
   const handleReset = () => {
     setOCRState(null);
     setPendingScanUri('');
     setPendingSample(null);
+    setEditableFields({
+      name: '',
+      epic: '',
+      relative: '',
+      age: '',
+      gender: 'MALE',
+    });
     setPipelineMode('upload');
   };
 
@@ -158,12 +226,40 @@ export const OCRScanPipeline: React.FC<OCRScanPipelineProps> = ({ onScanComplete
 
       {/* 3. Live Processing / Scanning Animation View */}
       {pipelineMode === 'scanning' && (
-        <LiveScanningSimulator
-          imageUri={pendingScanUri}
-          extractedName={editableFields.name}
-          extractedEpic={editableFields.epic}
-          onComplete={handleScanAnimationComplete}
-        />
+        <div className="space-y-4">
+          {pendingSample ? (
+            <LiveScanningSimulator
+              imageUri={pendingScanUri}
+              extractedName={editableFields.name}
+              extractedEpic={editableFields.epic}
+              onComplete={handleScanAnimationComplete}
+            />
+          ) : (
+            <div className="p-8 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-govElevated text-center space-y-6">
+              <div className="w-16 h-16 rounded-2xl bg-gov-navy/10 dark:bg-sky-500/10 text-gov-navy dark:text-sky-400 flex items-center justify-center mx-auto animate-pulse">
+                <Cpu className="w-8 h-8" />
+              </div>
+              <div className="space-y-2 max-w-md mx-auto">
+                <h4 className="text-base font-extrabold text-gov-navy dark:text-slate-100">
+                  On-Device Tesseract.js Neural Extraction
+                </h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {ocrStatusText}
+                </p>
+                {/* Progress bar */}
+                <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-2.5 overflow-hidden">
+                  <div
+                    className="bg-gov-navy dark:bg-sky-500 h-2.5 rounded-full transition-all duration-300"
+                    style={{ width: `${ocrProgressPct}%` }}
+                  />
+                </div>
+                <div className="text-[11px] font-mono text-slate-400 text-right">
+                  {ocrProgressPct}% Processed
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
       {/* 4. Review Extracted Data Dashboard */}
@@ -173,18 +269,32 @@ export const OCRScanPipeline: React.FC<OCRScanPipelineProps> = ({ onScanComplete
             {/* Header & Badges */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
               <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-2xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-sm">
-                  <Check className="w-6 h-6 stroke-[2.5]" />
+                <div className={`w-11 h-11 rounded-2xl flex items-center justify-center shadow-sm border ${
+                  ocrState.confidence >= 70
+                    ? 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400'
+                    : ocrState.confidence >= 40
+                    ? 'bg-amber-50 dark:bg-amber-950/60 border-amber-200 dark:border-amber-800 text-amber-600 dark:text-amber-400'
+                    : 'bg-rose-50 dark:bg-rose-950/60 border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-400'
+                }`}>
+                  {ocrState.confidence >= 70 ? (
+                    <Check className="w-6 h-6 stroke-[2.5]" />
+                  ) : (
+                    <AlertTriangle className="w-6 h-6 stroke-[2.5]" />
+                  )}
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-black uppercase text-gov-navy dark:text-sky-400">
-                      OCR EXTRACTION CONFIRMED
+                      {ocrState.confidence >= 70 ? 'OCR EXTRACTION CONFIRMED' : 'OCR REVIEW REQUIRED'}
                     </span>
-                    <Badge variant="emerald">{ocrState.confidence}% Confidence</Badge>
+                    <Badge variant={ocrState.confidence >= 70 ? 'emerald' : ocrState.confidence >= 40 ? 'gold' : 'crimson'}>
+                      {ocrState.confidence}% Confidence
+                    </Badge>
                   </div>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    Extracted on-device via isolated Web Worker OCR pipeline
+                    {ocrState.isRealExtraction
+                      ? 'Extracted via real on-device Tesseract.js Web Worker'
+                      : 'Verified against statutory specimen profile'}
                   </p>
                 </div>
               </div>
@@ -209,6 +319,21 @@ export const OCRScanPipeline: React.FC<OCRScanPipelineProps> = ({ onScanComplete
                 </Button>
               </div>
             </div>
+
+            {/* Warnings or Advisory notice if OCR had low confidence */}
+            {ocrState.warnings && ocrState.warnings.length > 0 && (
+              <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-700 text-xs text-amber-800 dark:text-amber-300 space-y-1">
+                <div className="font-bold flex items-center gap-1.5">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                  <span>OCR Ingestion Notice — Manual Verification Advised:</span>
+                </div>
+                <ul className="list-disc pl-5 space-y-0.5 text-[11px]">
+                  {ocrState.warnings.map((w, i) => (
+                    <li key={i}>{w}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {/* Document Preview & Extracted Schema Form */}
             <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
