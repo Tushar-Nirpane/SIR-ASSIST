@@ -12,44 +12,71 @@ export interface SearchMatchResult extends LegacyVoterRecord {
   matchType: 'EXACT_EPIC' | 'HIGH_PHONETIC' | 'FUZZY_NAME' | 'PARTIAL';
 }
 
+export interface StorageHealth {
+  isDurable: boolean;
+  isDegraded: boolean;
+  error?: string;
+}
+
 class LegacyRollEngine {
   private records: LegacyVoterRecord[] = [];
   private isInitialized = false;
+  private storageHealth: StorageHealth = { isDurable: true, isDegraded: false };
+
+  public getStorageHealth(): StorageHealth {
+    return { ...this.storageHealth };
+  }
 
   public async initialize(): Promise<number> {
     if (this.isInitialized && this.records.length > 0) {
       return this.records.length;
     }
 
+    let loadedFromIDB = false;
+
+    // 1. Attempt Read from IndexedDB
     try {
       const stored = await get<LegacyVoterRecord[]>(LEGACY_STORAGE_KEY);
       if (stored && Array.isArray(stored) && stored.length > 0) {
         this.records = stored;
-      } else {
-        // Hydrate from base snapshot with phonetic indices computed
-        const indexedRecords: LegacyVoterRecord[] = INITIAL_LEGACY_SNAPSHOT_2002_04.map((r) => ({
-          ...r,
-          soundexName: soundex(r.fullName),
-          metaphoneName: metaphone(r.fullName),
-          soundexRelative: soundex(r.relativeName),
-        }));
-
-        await set(LEGACY_STORAGE_KEY, indexedRecords);
-        this.records = indexedRecords;
+        loadedFromIDB = true;
+        this.storageHealth = { isDurable: true, isDegraded: false };
       }
-      this.isInitialized = true;
-      return this.records.length;
-    } catch (e) {
-      console.warn('IDB fallback to in-memory store', e);
-      this.records = INITIAL_LEGACY_SNAPSHOT_2002_04.map((r) => ({
+    } catch (readErr: any) {
+      console.warn('IDB read failure, falling back to memory snapshot:', readErr);
+      this.storageHealth = {
+        isDurable: false,
+        isDegraded: true,
+        error: `IndexedDB read unavailable: ${readErr?.message || 'Access blocked'}`,
+      };
+    }
+
+    // 2. If not stored, hydrate from base snapshot
+    if (!loadedFromIDB) {
+      const indexedRecords: LegacyVoterRecord[] = INITIAL_LEGACY_SNAPSHOT_2002_04.map((r) => ({
         ...r,
         soundexName: soundex(r.fullName),
         metaphoneName: metaphone(r.fullName),
         soundexRelative: soundex(r.relativeName),
       }));
-      this.isInitialized = true;
-      return this.records.length;
+      this.records = indexedRecords;
+
+      // 3. Attempt Write to IndexedDB with separate error capture
+      try {
+        await set(LEGACY_STORAGE_KEY, indexedRecords);
+        this.storageHealth = { isDurable: true, isDegraded: false };
+      } catch (writeErr: any) {
+        console.error('IDB write failure (session is ephemeral):', writeErr);
+        this.storageHealth = {
+          isDurable: false,
+          isDegraded: true,
+          error: `Storage Quota / Storage Blocked: Data cannot be saved to durable IndexedDB (${writeErr?.message || 'Write failed'})`,
+        };
+      }
     }
+
+    this.isInitialized = true;
+    return this.records.length;
   }
 
   public async getRecordCount(): Promise<number> {
