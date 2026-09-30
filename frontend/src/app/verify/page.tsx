@@ -3,7 +3,6 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import confetti from 'canvas-confetti';
 import {
   ShieldCheck,
   CheckCircle2,
@@ -167,12 +166,6 @@ function VerifyWizardContent() {
         partNo: record.partNo,
         sha256Digest: encryptedBundle.checksum,
         verdict: 'AUTHENTICITY CONFIRMED',
-      });
-
-      confetti({
-        particleCount: 90,
-        spread: 80,
-        origin: { y: 0.6 },
       });
 
       updateStep(4);
